@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Mass.io — 3D Arena</title>
+<style>
+:root{color-scheme:dark;--panel:#111c2de8;--line:#354762;--text:#edf5ff;--muted:#a7b8d0;--accent:#59edbd}
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#07101d;color:var(--text);font-family:system-ui,-apple-system,Segoe UI,sans-serif}canvas{display:block;touch-action:none}
+.panel{position:fixed;background:var(--panel);border:1px solid var(--line);border-radius:14px;box-shadow:0 8px 30px #0005;backdrop-filter:blur(9px);z-index:2}
+#hud{left:14px;top:14px;padding:12px 15px;min-width:160px;pointer-events:none}.brand{font-size:19px;font-weight:950;letter-spacing:.08em;color:var(--accent)}.small{font-size:12px;color:var(--muted)}.stat{display:flex;justify-content:space-between;gap:18px;margin-top:6px;font-size:13px}
+#board{right:14px;top:14px;width:205px;padding:12px 13px;pointer-events:none}.title{font-size:11px;letter-spacing:.13em;color:var(--muted);font-weight:900;margin-bottom:7px}.leader{display:flex;gap:7px;padding:4px 0;font-size:12px;align-items:center}.dot{width:9px;height:9px;border-radius:50%}.leader span:nth-child(2){flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#help{left:14px;bottom:14px;padding:9px 12px;font-size:12px;line-height:1.5;color:var(--muted);pointer-events:none}#status{top:12px;left:50%;transform:translateX(-50%);padding:7px 11px;font-size:12px;color:var(--muted);pointer-events:none;white-space:nowrap}
+#upgrade{right:14px;bottom:14px;width:220px;padding:12px;max-height:45vh;overflow:auto}
+#upgrade button{padding:8px;margin-top:6px;font-size:12px}#upgrade{left:50%;top:50%;right:auto;bottom:auto;transform:translate(-50%,-50%);width:min(310px,calc(100vw - 24px));max-height:75vh;z-index:6}#upgrade .small{line-height:1.4}
+@media(max-width:600px){#upgrade{left:50%;top:50%;right:auto;bottom:auto;width:min(290px,calc(100vw - 24px));padding:10px;max-height:70vh}#upgrade button{font-size:11px;padding:7px}}
+#overlay,#dead{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#030814a8;z-index:5}.hidden{display:none!important}.modal{width:min(420px,calc(100vw - 30px));padding:25px;text-align:center}.modal h1{margin:0 0 8px;font-size:36px;letter-spacing:-.05em}.modal p{font-size:14px;line-height:1.55;color:var(--muted)}input,button{width:100%;padding:12px;border-radius:10px;font:inherit}input{background:#0a1422;color:white;border:1px solid #435773;margin:8px 0 10px}button{border:0;background:var(--accent);color:#062017;font-weight:900;cursor:pointer}.pill{display:inline-block;border:1px solid #40516a;border-radius:999px;padding:5px 8px;font-size:11px;margin:3px;color:#c8d9f0}
+@media(max-width:600px){#hud{left:7px;top:7px;padding:9px 10px;min-width:128px}#board{right:7px;top:7px;width:148px;padding:8px}#help{left:7px;bottom:7px;max-width:62vw;font-size:11px}#status{top:auto;bottom:82px;font-size:11px}}
+</style>
+</head>
+<body>
+<div id="hud" class="panel"><div class="brand">MASS.IO 3D</div><div class="small">Single-player · AI arena</div><div class="stat"><span>Score</span><b id="score">0</b></div><div class="stat"><span>Mass</span><b id="mass">10</b></div><div class="stat"><span>Health</span><b id="health">100</b></div><div class="stat"><span>AI bots</span><b id="count">18</b></div></div>
+<div id="board" class="panel"><div class="title">LEADERBOARD</div><div id="leaders"></div></div>
+<div id="help" class="panel"><b>Move:</b> mouse / touch<br><b>Shoot:</b> tap / click<br><b>Upgrade:</b> choose one new class at each upgrade milestone<br><b>Battle:</b> weave through gaps in the wall line</div><div id="status" class="panel">Ready · play against AI bots</div>
+<div id="upgrade" class="panel hidden"><div class="title">TANK CLASS TREE</div><div class="small" id="upgradeInfo">Level up to unlock class choices.</div><div id="upgradeButtons"></div></div>
+<div id="overlay"><div class="modal panel"><h1>MASS<span style="color:var(--accent)">.IO</span></h1><p>Grow, collect energy, fight AI opponents, and unlock new tank classes at level milestones, with each class available only once per life.</p><span class="pill">3D world</span><span class="pill">AI opponents</span><span class="pill">No account needed</span><input id="name" maxlength="16" placeholder="Choose your name" value="Player"><button id="join">Start playing</button><p class="small">Computer-controlled opponents only. Internet is needed to load the 3D engine.</p></div></div>
+<div id="dead" class="hidden"><div class="modal panel"><h1>You were eaten!</h1><p id="deathText">Try again and grow smarter.</p><button id="again">Play again</button></div></div>
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+<script>
+(()=>{
+const $=id=>document.getElementById(id);
+if(!window.THREE){$('status').textContent='Could not load 3D engine. Check your internet connection.';return;}
+const scene=new THREE.Scene();scene.background=new THREE.Color(0x07101d);scene.fog=new THREE.Fog(0x07101d,95,230);
+const camera=new THREE.PerspectiveCamera(52,innerWidth/innerHeight,.1,500);camera.position.set(0,55,65);
+const renderer=new THREE.WebGLRenderer({antialias:true,powerPreference:'high-performance'});renderer.setPixelRatio(Math.min(devicePixelRatio,1.7));renderer.setSize(innerWidth,innerHeight);renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.2;document.body.prepend(renderer.domElement);
+scene.add(new THREE.HemisphereLight(0x9fcaff,0x152035,2.0));
+const sun=new THREE.DirectionalLight(0xffffff,3.0);sun.position.set(-35,65,25);sun.castShadow=true;sun.shadow.mapSize.set(1024,1024);scene.add(sun);
+const world=150, floorMat=new THREE.MeshStandardMaterial({color:0x101f32,roughness:.82,metalness:.18});
+const floor=new THREE.Mesh(new THREE.PlaneGeometry(world,world),floorMat);floor.rotation.x=-Math.PI/2;floor.position.y=-1;floor.receiveShadow=true;scene.add(floor);
+const grid=new THREE.GridHelper(world,60,0x31516e,0x1c3048);grid.position.y=-.96;scene.add(grid);
+const edgeMat=new THREE.MeshStandardMaterial({color:0x39d8c0,emissive:0x0a5c54,metalness:.55,roughness:.28});
+const edge=new THREE.Mesh(new THREE.BoxGeometry(world,.7,world),new THREE.MeshStandardMaterial({color:0x132940,wireframe:true,transparent:true,opacity:.45}));edge.position.y=-.7;scene.add(edge);
+// Solid perimeter walls: visible, glowing top rails, and collision boundaries.
+const wallMat=new THREE.MeshStandardMaterial({color:0x183b55,metalness:.5,roughness:.3,emissive:0x082536});
+const railMat=new THREE.MeshStandardMaterial({color:0x48e5ce,emissive:0x137f73,metalness:.35,roughness:.25});
+for(const [x,z,w,d] of [[0,-world/2,world,1],[0,world/2,world,1],[-world/2,0,1,world],[world/2,0,1,world]]){
+ const wall=new THREE.Mesh(new THREE.BoxGeometry(w,4,d),wallMat);wall.position.set(x,1,z);wall.castShadow=true;wall.receiveShadow=true;scene.add(wall);
+ const rail=new THREE.Mesh(new THREE.BoxGeometry(w,0.16,d),railMat);rail.position.set(x,3,z);scene.add(rail);
+}
+// A solid center divider separates the player and AI halves.
+const dividerMat=new THREE.MeshStandardMaterial({color:0x264f72,metalness:.55,roughness:.3,emissive:0x0b2945});
+const dividerRailMat=new THREE.MeshStandardMaterial({color:0x72a9ff,emissive:0x255ba8,metalness:.3,roughness:.25});
+const dividerWalls=[];
+function addMazeWall(x,z,w,d){
+ const wall=new THREE.Mesh(new THREE.BoxGeometry(w,4.4,d),dividerMat);
+ wall.position.set(x,1.25,z);wall.castShadow=true;wall.receiveShadow=true;scene.add(wall);
+ const rail=new THREE.Mesh(new THREE.BoxGeometry(w+.22,.16,d+.12),dividerRailMat);
+ rail.position.set(x,3.55,z);scene.add(rail);
+ dividerWalls.push({x,z,w,d,thick:w,len:d});
+}
+// A more maze-like divider: central blocks, offset branches, and openings to weave through.
+for(let z=-world/2+8;z<=world/2-8;z+=18) addMazeWall(0,z,1.2,10);
+addMazeWall(-7,-43,12,1.2); addMazeWall(7,-25,12,1.2);
+addMazeWall(-7,-7,12,1.2); addMazeWall(7,11,12,1.2);
+addMazeWall(-7,29,12,1.2); addMazeWall(7,47,12,1.2);
+addMazeWall(-12,-31,1.2,12); addMazeWall(12,-13,1.2,12);
+addMazeWall(-12,5,1.2,12); addMazeWall(12,23,1.2,12); addMazeWall(-12,41,1.2,10);
+const COLORS=[0xff627d,0x65a9ff,0xffc857,0xb18cff,0x54d6a0,0xff9f5a,0x5fe0e8,0xf28ccf];
+const rand=(a,b)=>a+Math.random()*(b-a),clamp=(n,a,b)=>Math.max(a,Math.min(b,n)),radius=m=>.65+Math.sqrt(Math.max(1,m*10))*.085,speed=m=>9/Math.pow(Math.max(1,m)/10,.22),dist=(a,b)=>Math.hypot(a.x-b.x,a.z-b.z);
+const sphereGeo=new THREE.SphereGeometry(1,32,24), players=[],foods=[],shots=[];let me=null,playing=false,last=performance.now(),pointer={x:0,y:0,active:false},lastShot=0;
+const matFor=c=>new THREE.MeshPhysicalMaterial({color:c,roughness:.19,metalness:.12,clearcoat:1,clearcoatRoughness:.08});
+function makeSphere(c,r,glow=false){const mat=matFor(c);if(glow){mat.emissive=new THREE.Color(c);mat.emissiveIntensity=.32;}const mesh=new THREE.Mesh(sphereGeo,mat);mesh.scale.setScalar(r);mesh.castShadow=true;mesh.receiveShadow=true;scene.add(mesh);return mesh;}
+function spawn(name,bot=false,mass=10){let p={name,x:rand(-world/2+8,world/2-8),z:rand(-world/2+8,world/2-8),mass,score:Math.round(mass*10),xp:0,level:1,upgrades:0,health:100,maxHealth:100,healTimer:0,className:'Basic',drones:[],ramPower:0,ramCooldown:0,shotTimer:rand(.5,2),color:COLORS[Math.floor(Math.random()*COLORS.length)],tx:rand(-60,60),tz:rand(-60,60),bot,think:0,alive:true,lastDamage:0};p.r=radius(p.mass);p.mesh=makeSphere(p.color,p.r);
+ // Health bar floats above each tank and always faces the camera.
+ const hbCanvas=document.createElement('canvas');hbCanvas.width=128;hbCanvas.height=20;
+ const hbCtx=hbCanvas.getContext('2d');hbCtx.fillStyle='#101827';hbCtx.fillRect(0,0,128,20);hbCtx.fillStyle='#44e58c';hbCtx.fillRect(3,3,122,14);
+ const hbTex=new THREE.CanvasTexture(hbCanvas);const hbMat=new THREE.SpriteMaterial({map:hbTex,transparent:true,depthTest:false});
+ p.healthBar=new THREE.Sprite(hbMat);p.healthBar.scale.set(2.8,.44,1);scene.add(p.healthBar);p.healthCanvas=hbCanvas;p.healthCtx=hbCtx;p.healthTexture=hbTex;
+ p.shadow=new THREE.Mesh(new THREE.CircleGeometry(p.r*1.2,24),new THREE.MeshBasicMaterial({color:0x000000,transparent:true,opacity:.22,depthWrite:false}));p.shadow.rotation.x=-Math.PI/2;p.shadow.position.y=-.88;scene.add(p.shadow);
+ // Chunky, high-contrast cannon barrel inspired by arena shooter tanks.
+ p.barrel=new THREE.Group();
+ const barrelMat=new THREE.MeshStandardMaterial({color:0x34465e,metalness:.72,roughness:.24});
+ const barrelDark=new THREE.MeshStandardMaterial({color:0x101a2a,metalness:.55,roughness:.28});
+ const tube=new THREE.Mesh(new THREE.CylinderGeometry(.46,.56,2.15,20),barrelMat);tube.rotation.x=Math.PI/2;tube.position.z=-.88;tube.castShadow=true;p.barrel.add(tube);
+ const stripe=new THREE.Mesh(new THREE.CylinderGeometry(.57,.57,.24,20),new THREE.MeshStandardMaterial({color:p.color,emissive:p.color,emissiveIntensity:.28,metalness:.25,roughness:.3}));stripe.rotation.x=Math.PI/2;stripe.position.z=-1.10;p.barrel.add(stripe);
+ const muzzleBase=new THREE.Mesh(new THREE.CylinderGeometry(.64,.59,.34,20),barrelMat);muzzleBase.rotation.x=Math.PI/2;muzzleBase.position.z=-1.78;muzzleBase.castShadow=true;p.barrel.add(muzzleBase);
+ const muzzleHole=new THREE.Mesh(new THREE.CylinderGeometry(.40,.40,.34,20),barrelDark);muzzleHole.rotation.x=Math.PI/2;muzzleHole.position.z=-1.79;p.barrel.add(muzzleHole);
+ const muzzleGlow=new THREE.Mesh(new THREE.TorusGeometry(.44,.075,10,24),new THREE.MeshBasicMaterial({color:0x9beeff}));muzzleGlow.position.z=-1.98;p.barrel.add(muzzleGlow);
+ scene.add(p.barrel);p.barrel.position.set(p.x,p.r-.2,p.z);
+ place(p);players.push(p);return p;}
+function place(p){
+ p.r=radius(p.mass);p.mesh.scale.setScalar(p.r);p.mesh.position.set(p.x,p.r-.55,p.z);
+ p.shadow.position.set(p.x,-.88,p.z);p.shadow.scale.setScalar(1);
+ if(p.barrel)p.barrel.position.set(p.x,p.r-.2,p.z);
+ if(p.healthBar){
+   p.healthBar.position.set(p.x,p.r*2.15+1.1,p.z);
+   const c=p.healthCtx,ratio=clamp(p.health/p.maxHealth,0,1);
+   c.clearRect(0,0,128,20);c.fillStyle='#101827';c.fillRect(0,0,128,20);
+   c.fillStyle=ratio>.55?'#44e58c':ratio>.25?'#ffca58':'#ff5268';c.fillRect(3,3,122*ratio,14);
+   c.strokeStyle='#dcecff';c.lineWidth=2;c.strokeRect(1,1,126,18);p.healthTexture.needsUpdate=true;
+ }
+}
+function food(){
+ const c=COLORS[Math.floor(Math.random()*COLORS.length)],r=rand(.48,.68);
+ const sides=[3,4,5,6][Math.floor(Math.random()*4)];
+ const shapeGeo=new THREE.CylinderGeometry(r,r,r*.42,sides,1,false);
+ const mat=new THREE.MeshPhysicalMaterial({color:c,emissive:c,emissiveIntensity:1.45,roughness:.12,metalness:.18,clearcoat:1,clearcoatRoughness:.08});
+ const mesh=new THREE.Mesh(shapeGeo,mat);mesh.castShadow=true;mesh.receiveShadow=true;scene.add(mesh);
+ const halo=new THREE.Mesh(new THREE.TorusGeometry(r*1.38,.055,8,32),new THREE.MeshBasicMaterial({color:c,transparent:true,opacity:1}));
+ halo.rotation.x=Math.PI/2;scene.add(halo);
+ const beacon=new THREE.Mesh(new THREE.CylinderGeometry(.015,.16,1.9,10,1,true),new THREE.MeshBasicMaterial({color:c,transparent:true,opacity:.18,side:THREE.DoubleSide,depthWrite:false}));
+ scene.add(beacon);
+ const f={x:(Math.random()<.5?rand(-world/2+3,-3):rand(3,world/2-3)),z:rand(-world/2+3,world/2-3),r,mesh,halo,beacon,phase:rand(0,6),sides};
+ foods.push(f);mesh.position.set(f.x,.55,f.z);halo.position.set(f.x,.16,f.z);beacon.position.set(f.x,1.1,f.z);
+}
+for(let i=0;i<105;i++)food();
+const CLASSES=[
+ {name:'Twin Cannon',cost:250,desc:'Adds two side cannons',kind:'twin'},
+ {name:'Drone Master',cost:400,desc:'Two orbiting drones auto-fire',kind:'drones'},
+ {name:'Ram Tank',cost:550,desc:'Ramming deals extra damage',kind:'ram'},
+ {name:'Sniper',cost:700,desc:'Longer range and stronger shots',kind:'sniper'}
+];
+// Arras-inspired progression: unlock class choices at increasingly spaced XP milestones.
+const UPGRADE_XP=[250,650,1200,1900,2800];
+const MAX_UPGRADES=5;
+let upgradeIndex=0,upgradeOpen=false;
+function buildUpgradeUI(){
+ const root=$('upgradeButtons');root.innerHTML='';
+ for(const c of CLASSES){
+   const b=document.createElement('button');
+   const alreadyOwned=!!(me&&me.ownedClasses&&me.ownedClasses.includes(c.name));
+   b.textContent=(alreadyOwned?'✓ ':'')+c.name+' · '+c.cost+' score — '+c.desc+(alreadyOwned?' · already chosen':'');
+   b.disabled=alreadyOwned||!!(me&&me.score<c.cost);
+   b.onclick=()=>buyClass(c);root.appendChild(b);
+ }
+ const skip=document.createElement('button');skip.textContent='Continue without upgrading';skip.onclick=()=>{upgradeIndex++;upgradeOpen=false;$('upgrade').classList.add('hidden');playing=true;$('status').textContent='Upgrade skipped · keep growing';};root.appendChild(skip);
+}
+function checkLevelProgress(){
+ if(!me||!me.alive||upgradeOpen||me.upgrades>=MAX_UPGRADES)return;
+ if(upgradeIndex<UPGRADE_XP.length&&me.xp>=UPGRADE_XP[upgradeIndex])openUpgradeChoice();
+}
+function openUpgradeChoice(){
+ if(!me||!me.alive||upgradeOpen||me.upgrades>=MAX_UPGRADES)return;
+ upgradeOpen=true;playing=false;$('upgrade').classList.remove('hidden');
+ $('upgradeInfo').textContent='Upgrade '+(me.upgrades+1)+' of '+MAX_UPGRADES+' · Choose one class you have not taken before. You must wait for the next level milestone after this choice.';
+ buildUpgradeUI();$('status').textContent='Level-up: choose a tank class';
+}
+function buyClass(c){
+ if(!me||!me.alive||!upgradeOpen)return;
+ me.ownedClasses=me.ownedClasses||[];
+ if(me.ownedClasses.includes(c.name)){ $('status').textContent='You already chose '+c.name+'. Pick a different class.';buildUpgradeUI();return; }
+ if(me.score<c.cost){$('status').textContent='Earn '+(c.cost-me.score)+' more score for '+c.name;return;}
+ me.score-=c.cost;me.mass=Math.max(2,me.score/10);me.className=c.name;me.upgrades++;me.ownedClasses.push(c.name);upgradeIndex++;me.level=me.upgrades+1;
+ if(c.kind==='twin'){
+   for(const side of [-1,1]){
+     const g=new THREE.Group();
+     const m=new THREE.Mesh(new THREE.CylinderGeometry(.30,.35,1.8,14),new THREE.MeshStandardMaterial({color:0x607b98,metalness:.7,roughness:.24}));
+     m.rotation.x=Math.PI/2;m.position.z=-.7;g.add(m);g.position.set(side*.72,.18,-.2);me.mesh.add(g);
+     me.extraCannons=me.extraCannons||[];me.extraCannons.push(g);
+   }
+ }
+ if(c.kind==='drones'){
+   for(let i=0;i<2;i++){
+     const d=makeSphere(COLORS[2+i],.42,true);
+     const ring=new THREE.Mesh(new THREE.TorusGeometry(.5,.07,8,18),new THREE.MeshBasicMaterial({color:COLORS[2+i]}));d.add(ring);
+     me.drones.push({mesh:d,phase:i*Math.PI,fire:rand(.5,1.5)});
+   }
+ }
+ if(c.kind==='ram')me.ramPower++;
+ if(c.kind==='sniper')me.shotBoost=(me.shotBoost||0)+1;
+ $('upgrade').classList.add('hidden');upgradeOpen=false;playing=true;place(me);
+ $('status').textContent='Class unlocked: '+c.name+' · '+me.upgrades+'/'+MAX_UPGRADES+' upgrades';
+ $('upgradeInfo').textContent=me.upgrades>=MAX_UPGRADES?'Upgrade cap reached.':(UPGRADE_XP[upgradeIndex]!==undefined?'Next upgrade unlock at XP '+UPGRADE_XP[upgradeIndex]+'.':'No more upgrade milestones.');buildUpgradeUI();
+}
+function reset(){if(me&&me.drones)for(const d of me.drones)scene.remove(d.mesh);for(const p of players){scene.remove(p.mesh);scene.remove(p.shadow);if(p.barrel)scene.remove(p.barrel);if(p.healthBar)scene.remove(p.healthBar);if(p.extraCannons)p.extraCannons=[];}players.length=0;for(const s of shots)scene.remove(s.mesh);shots.length=0;for(const f of foods){f.mesh.visible=true;f.halo.visible=true;f.beacon.visible=true;f.respawn=0;}me=spawn(($('name').value.trim().replace(/[<>]/g,'').slice(0,16)||'Player'),false);me.x=-world*.24;me.z=0;place(me);upgradeIndex=0;upgradeOpen=false;const names=['Nova','Blobber','Orbit','Pixel','Comet','Munch','Zippy','Echo','Moss','Rex','Dot','Bubbles','Ace','Sprout','Dash','Luna','Bolt','Pip'];for(let i=0;i<names.length;i++){const b=spawn(names[i],true,rand(7,15));b.x=rand(5,world/2-10);b.z=rand(-world/2+10,world/2-10);place(b);}playing=true;$('upgrade').classList.add('hidden');$('upgradeInfo').textContent='Level up to unlock class choices.';$('overlay').classList.add('hidden');$('dead').classList.add('hidden');$('status').textContent='3D arena · eat, grow, survive';}
+$('join').onclick=reset;$('again').onclick=reset;
+addEventListener('pointermove',e=>{pointer.x=e.clientX;pointer.y=e.clientY;pointer.active=true;});
+addEventListener('pointerdown',e=>{pointer.x=e.clientX;pointer.y=e.clientY;pointer.active=true;if(playing&&me&&me.alive)shoot(me,pointer.x,pointer.y);});
+addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);});
+function addScore(p,n){p.score+=n;p.xp=(p.xp||0)+n;p.mass=p.score/10;p.r=radius(p.mass);place(p);if(p===me)checkLevelProgress();}
+function shoot(p,screenX,screenY){const now=performance.now();if(now-p.lastShot<380||!p.alive)return;p.lastShot=now;
+ const ndc=new THREE.Vector2(screenX/innerWidth*2-1,-(screenY/innerHeight)*2+1),ray=new THREE.Raycaster();ray.setFromCamera(ndc,camera);
+ const ground=new THREE.Plane(new THREE.Vector3(0,1,0),0),hit=new THREE.Vector3();if(!ray.ray.intersectPlane(ground,hit))return;
+ let dx=hit.x-p.x,dz=hit.z-p.z;
+ // If the pointer ray is nearly vertical, fall back to the pointer's screen-space direction.
+ if(Math.hypot(dx,dz)<.5){dx=screenX-innerWidth/2;dz=screenY-innerHeight/2;}
+ const len=Math.hypot(dx,dz)||1;dx/=len;dz/=len;
+ if(!p.bot){p.aimX=dx;p.aimZ=dz;if(p.barrel)p.barrel.rotation.y=Math.atan2(-dx,-dz);}
+ fireProjectile(p,dx,dz);
+}
+function fireProjectile(p,dx,dz){
+ const r=.22,mesh=makeSphere(p.color,r,true);
+ const muzzleDist=1.72;
+ const x=p.x+dx*(p.r*.35+muzzleDist),z=p.z+dz*(p.r*.35+muzzleDist);
+ mesh.position.set(x,Math.max(.35,p.r*.45),z);
+ shots.push({mesh,x,z,dx,dz,owner:p,life:2.5,r,speed:38+Math.min(12,p.mass*.1)+(p.shotBoost?20:0),damage:p.shotBoost?38:25});
+ if(p.barrel)p.barrel.rotation.y=Math.atan2(-dx,-dz);
+}
+function eat(a,b){addScore(a,Math.max(10,Math.round(b.score*.7)));scene.remove(b.mesh);scene.remove(b.shadow);if(b.healthBar)b.healthBar.visible=false;b.alive=false;}
+function botMove(p,dt){p.think-=dt;if(p.think<=0){p.think=rand(.25,.9);let target=null,best=Infinity;for(const q of players){if(q===p||!q.alive)continue;let d=dist(p,q);if(q.mass>p.mass*1.3&&d<24&&d<best){target=q;best=d;}}if(target){let dx=p.x-target.x,dz=p.z-target.z,l=Math.hypot(dx,dz)||1;p.tx=p.x+dx/l*25;p.tz=p.z+dz/l*25;}else if(me&&me.alive&&p.mass>me.mass*1.5&&dist(p,me)<20){p.tx=me.x;p.tz=me.z;}else{let f=foods.reduce((a,b)=>dist(p,b)<dist(p,a)?b:a,foods[0]);p.tx=f?f.x:rand(-65,65);p.tz=f?f.z:rand(-65,65);}}}
+function render(now){requestAnimationFrame(render);const dt=Math.min((now-last)/1000,.04);last=now;const t=now*.001;
+if(playing){checkLevelProgress();for(const p of players){if(!p.alive)continue;if(p.bot){botMove(p,dt);p.shotTimer-=dt;if(p.shotTimer<=0&&me&&me.alive&&dist(p,me)<48){p.shotTimer=rand(1.1,2.5);const dx=me.x-p.x,dz=me.z-p.z,l=Math.hypot(dx,dz)||1;fireProjectile(p,dx/l,dz/l);}}else{const v=new THREE.Vector3((pointer.x/innerWidth-.5)*2,0,(pointer.y/innerHeight-.5)*2);const dir=new THREE.Vector3(v.x,0,v.z);dir.applyAxisAngle(new THREE.Vector3(0,1,0),0);p.tx=p.x+dir.x*20;p.tz=p.z+dir.z*20;}
+let dx=p.tx-p.x,dz=p.tz-p.z,l=Math.hypot(dx,dz);if(l>.2){const s=speed(p.mass)*dt;p.x+=dx/l*Math.min(s,l);p.z+=dz/l*Math.min(s,l);}p.x=clamp(p.x,-world/2+3+p.r,world/2-3-p.r);
+ p.z=clamp(p.z,-world/2+3+p.r,world/2-3-p.r);
+ // Collide with the actual wall segments, not the gaps between them.
+ for(const w of dividerWalls){
+   if(Math.abs(p.x-w.x)<w.w/2+p.r && Math.abs(p.z-w.z)<w.d/2+p.r){
+     const ox=w.w/2+p.r-Math.abs(p.x-w.x), oz=w.d/2+p.r-Math.abs(p.z-w.z);
+     if(ox<oz)p.x=w.x+(p.x<w.x?-1:1)*(w.w/2+p.r+.08);
+     else p.z=w.z+(p.z<w.z?-1:1)*(w.d/2+p.r+.08);
+   }
+ }
+ place(p);if(p.barrel&&p.bot){const dx=p.tx-p.x,dz=p.tz-p.z;p.barrel.rotation.y=Math.atan2(-dx,-dz);}p.mesh.position.y=p.r-.55+Math.sin(t*2+p.x)*.025;}
+if(me&&me.alive&&me.drones&&me.drones.length){
+ for(const d of me.drones){
+   d.phase+=dt*1.8;d.mesh.position.set(me.x+Math.cos(d.phase)*(me.r+1.6),.7+Math.sin(t*3+d.phase)*.15,me.z+Math.sin(d.phase)*(me.r+1.6));
+   d.fire-=dt;
+   if(d.fire<=0){d.fire=1.1;let target=null,best=Infinity;for(const q of players){if(!q.alive||q===me)continue;const dd=dist(me,q);if(dd<best){best=dd;target=q;}}
+     if(target&&best<65){const dx=target.x-d.mesh.position.x,dz=target.z-d.mesh.position.z,l=Math.hypot(dx,dz)||1;fireProjectile(me,dx/l,dz/l);}
+   }
+ }
+}
+for(let i=shots.length-1;i>=0;i--){const s=shots[i];s.x+=s.dx*s.speed*dt;s.z+=s.dz*s.speed*dt;s.life-=dt;s.mesh.position.set(s.x,.35+Math.sin(t*18)*.04,s.z);let removed=false;
+ if(Math.abs(s.x)>world/2-1||Math.abs(s.z)>world/2-1||s.life<=0)removed=true;
+ for(const w of dividerWalls){if(Math.abs(s.x-w.x)<w.w/2+s.r&&Math.abs(s.z-w.z)<w.d/2+s.r){removed=true;break;}}
+ if(!removed){for(const f of foods){if(f.mesh.visible&&Math.hypot(s.x-f.x,s.z-f.z)<f.r+.35){f.mesh.visible=false;f.halo.visible=false;f.beacon.visible=false;f.respawn=performance.now()+rand(4500,8500);if(s.owner.alive)addScore(s.owner,5+f.sides);removed=true;break;}}}
+ if(!removed){for(const q of players){if(!q.alive||q===s.owner)continue;if(Math.hypot(s.x-q.x,s.z-q.z)<q.r+.28){if(s.owner.alive)addScore(s.owner,Math.max(2,Math.round(q.mass*.35)));
+ q.health-=s.damage||25;q.lastDamage=performance.now();q.mass=Math.max(2,q.mass-.45);q.score=Math.max(0,q.score-4);place(q);
+ if(q.health<=0){q.alive=false;scene.remove(q.mesh);scene.remove(q.shadow);if(q.healthBar)q.healthBar.visible=false;if(q.barrel)q.barrel.visible=false;
+   if(q===me){playing=false;$('dead').classList.remove('hidden');$('deathText').textContent='You took too much damage. Try healing and using cover.';}
+   else {setTimeout(()=>{if(!playing&&q===me)return; q.health=100;q.maxHealth=100;q.mass=8;q.score=80;q.x=rand(-world/2+10,world/2-10);q.z=rand(-world/2+10,world/2-10);q.alive=true;q.mesh.visible=true;if(q.barrel)q.barrel.visible=true;scene.add(q.mesh);scene.add(q.shadow);if(q.barrel)scene.add(q.barrel);if(q.healthBar)q.healthBar.visible=true;place(q);},4500);}
+ }else if(q===me){$('status').textContent='Hit! Find cover and heal';}
+ removed=true;break;}}}
+ if(removed){scene.remove(s.mesh);shots.splice(i,1);}
+}
+for(const p of players){if(!p.alive)continue;for(const f of foods){if(!f.mesh.visible)continue;if(Math.hypot(p.x-f.x,p.z-f.z)<p.r+f.r){addScore(p,2);f.mesh.visible=false;f.halo.visible=false;f.x=rand(-world/2+2,world/2-2);f.z=rand(-world/2+2,world/2-2);f.mesh.position.set(f.x,.55,f.z);f.halo.position.set(f.x,.16,f.z);f.beacon.position.set(f.x,1.1,f.z);f.mesh.visible=true;f.halo.visible=true;break;}}
+for(const q of players){if(q===p||!q.alive||((p.x<0)!==(q.x<0)))continue;if(p===me&&p.ramPower&&dist(p,q)<p.r+q.r&&p.ramCooldown<=0){q.health-=22;q.lastDamage=performance.now();p.ramCooldown=1.2;if(q.health<=0){q.alive=false;scene.remove(q.mesh);scene.remove(q.shadow);if(q.healthBar)q.healthBar.visible=false;if(q.barrel)q.barrel.visible=false;} }
+if(p.mass>q.mass*1.6&&dist(p,q)<p.r*.9){eat(p,q);if(q===me){playing=false;$('dead').classList.remove('hidden');$('deathText').textContent=p.name+' absorbed your sphere. Try collecting energy first.';}}}}
+if(me&&me.alive){$('score').textContent=me.score;$('mass').textContent=Math.round(me.mass);$('health').textContent=Math.ceil(me.health);$('upgradeInfo').textContent='Score: '+me.score+' · Level: '+me.level+' · Upgrades: '+me.upgrades+'/'+MAX_UPGRADES+' · Class: '+me.className;$('count').textContent=players.filter(p=>p.bot&&p.alive).length;}
+const leaders=players.filter(p=>p.alive).sort((a,b)=>b.score-a.score).slice(0,8);$('leaders').innerHTML=leaders.map((p,i)=>`<div class="leader"><span class="dot" style="background:#${p.color.toString(16).padStart(6,'0')}"></span><span>${i+1}. ${p.name}${p===me?' (you)':''}</span><b>${p.score}</b></div>`).join('');
+}
+if(me){const target=new THREE.Vector3(me.x,0,me.z);const offset=new THREE.Vector3(0,25,31);camera.position.lerp(target.clone().add(offset),.055);camera.lookAt(target);}
+for(const f of foods){if(f.respawn&&performance.now()>f.respawn){f.x=(Math.random()<.5?rand(-world/2+3,-3):rand(3,world/2-3));f.z=rand(-world/2+3,world/2-3);f.respawn=0;f.mesh.visible=true;f.halo.visible=true;f.beacon.visible=true;f.mesh.position.set(f.x,.55,f.z);f.halo.position.set(f.x,.16,f.z);f.beacon.position.set(f.x,1.1,f.z);}if(!f.mesh.visible)continue;f.mesh.position.y=.55+Math.sin(t*2+f.phase)*.16;f.mesh.rotation.y=t*.8+f.phase;f.mesh.rotation.x=Math.sin(t+f.phase)*.18;f.halo.position.set(f.x,.16+Math.sin(t*2+f.phase)*.05,f.z);f.beacon.position.y=1.1+Math.sin(t*2+f.phase)*.08;f.halo.rotation.z=t*.4+f.phase;}
+renderer.render(scene,camera);
+}
+requestAnimationFrame(render);
+})();
+</script>
+</body></html>
